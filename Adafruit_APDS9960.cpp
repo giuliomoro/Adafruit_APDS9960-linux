@@ -37,15 +37,22 @@
  *  THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifdef __AVR
-#include <avr/pgmspace.h>
-#elif defined(ESP8266)
-#include <pgmspace.h>
-#endif
 #include <math.h>
 #include <stdlib.h>
+#include <unistd.h>
+#include <time.h>
 
 #include "Adafruit_APDS9960.h"
+
+unsigned long millis() {
+  struct timespec t;
+  if(clock_gettime(CLOCK_MONOTONIC, &t))
+    return -1;
+  uint64_t ms = t.tv_nsec / 1000 / 1000 + t.tv_sec * 1000;
+  static uint64_t initialMs = ms;
+  printf("millis: %llu\n", ms - initialMs);
+  return ms - initialMs;
+}
 
 /*!
  *  @brief  Implements missing powf function
@@ -60,8 +67,6 @@ float powf(const float x, const float y) {
 }
 
 Adafruit_APDS9960::~Adafruit_APDS9960() {
-  if (i2c_dev)
-    delete i2c_dev;
 }
 
 /*!
@@ -70,7 +75,7 @@ Adafruit_APDS9960::~Adafruit_APDS9960() {
  *  @param  en
  *          Enable (True/False)
  */
-void Adafruit_APDS9960::enable(boolean en) {
+void Adafruit_APDS9960::enable(bool en) {
   _enable.PON = en;
   this->write8(APDS9960_ENABLE, _enable.get());
 }
@@ -83,17 +88,15 @@ void Adafruit_APDS9960::enable(boolean en) {
  *          Gain
  *  @param  addr
  *          I2C address
- *  @param  *theWire
- *          Wire object
+ *  @param  bus
+ *          The I2C bus to use
  *  @return True if initialization was successful, otherwise false.
  */
-boolean Adafruit_APDS9960::begin(uint16_t iTimeMS, apds9960AGain_t aGain,
-                                 uint8_t addr, TwoWire *theWire) {
+bool Adafruit_APDS9960::begin(uint16_t iTimeMS, apds9960AGain_t aGain,
+                                 uint8_t addr, int bus) {
 
-  if (i2c_dev)
-    delete i2c_dev;
-  i2c_dev = new Adafruit_I2CDevice(addr, theWire);
-  if (!i2c_dev->begin()) {
+  if(initI2C_RW(bus, addr, -1)) {
+    fprintf(stderr, "Error opening device at address %d %#x on bus %d\n", addr, addr, bus);
     return false;
   }
 
@@ -118,9 +121,9 @@ boolean Adafruit_APDS9960::begin(uint16_t iTimeMS, apds9960AGain_t aGain,
 
   /* Note: by default, the device is in power down mode on bootup */
   enable(false);
-  delay(10);
+  usleep(10000);
   enable(true);
-  delay(10);
+  usleep(10000);
 
   // default to all gesture dimensions
   setGestureDimensions(APDS9960_DIMENSIONS_ALL);
@@ -238,7 +241,7 @@ void Adafruit_APDS9960::setProxPulse(apds9960PPulseLen_t pLen, uint8_t pulses) {
  *  @param  en
  *          Enable (True/False)
  */
-void Adafruit_APDS9960::enableProximity(boolean en) {
+void Adafruit_APDS9960::enableProximity(bool en) {
   _enable.PEN = en;
 
   write8(APDS9960_ENABLE, _enable.get());
@@ -373,7 +376,7 @@ void Adafruit_APDS9960::setGestureOffset(uint8_t offset_up, uint8_t offset_down,
  *  @param  en
  *          Enable (True/False)
  */
-void Adafruit_APDS9960::enableGesture(boolean en) {
+void Adafruit_APDS9960::enableGesture(bool en) {
   if (!en) {
     _gconf4.GMODE = 0;
     write8(APDS9960_GCONF4, _gconf4.get());
@@ -411,7 +414,7 @@ uint8_t Adafruit_APDS9960::readGesture() {
     if (!gestureValid())
       return 0;
 
-    delay(30);
+    usleep(30000);
     toRead = this->read8(APDS9960_GFLVL);
 
     // produces sideffects needed for readGesture to work
@@ -483,7 +486,7 @@ void Adafruit_APDS9960::setLED(apds9960LedDrive_t drive,
  *  @param  en
  *          Enable (True/False)
  */
-void Adafruit_APDS9960::enableColor(boolean en) {
+void Adafruit_APDS9960::enableColor(bool en) {
   _enable.AEN = en;
   write8(APDS9960_ENABLE, _enable.get());
 }
@@ -692,8 +695,33 @@ uint16_t Adafruit_APDS9960::read16R(uint8_t reg) {
  *  @return Position after reading
  */
 uint8_t Adafruit_APDS9960::read(uint8_t reg, uint8_t *buf, uint8_t num) {
-  buf[0] = reg;
-  i2c_dev->write_then_read(buf, 1, buf, num);
+  if(!buf){
+    fprintf(stderr, "read(): invalid buf pointer\n");
+    return -1; 
+  }
+  i2c_char_t outbuf = reg;
+  struct i2c_rdwr_ioctl_data packets;
+  struct i2c_msg messages[2];
+
+  /* Reading a register involves a repeated start condition which needs ioctl() */
+  messages[0].addr  = i2C_address;
+  messages[0].flags = 0;
+  messages[0].len   = sizeof(outbuf);
+  messages[0].buf   = &outbuf;
+
+  /* The data will get returned in this structure */
+  messages[1].addr  = i2C_address;
+  messages[1].flags = I2C_M_RD/* | I2C_M_NOSTART*/;
+  messages[1].len   = num;
+  messages[1].buf   = (uint8_t*)buf;
+
+  /* Send the request to the kernel and get the result back */
+  packets.msgs      = messages;
+  packets.nmsgs     = 2;
+  if(ioctl(i2C_file, I2C_RDWR, &packets) < 0) {
+      fprintf(stderr, "Failed to read register %d on I2c sensor\n", reg);
+      return -1;
+  }
   return num;
 }
 
@@ -706,7 +734,15 @@ uint8_t Adafruit_APDS9960::read(uint8_t reg, uint8_t *buf, uint8_t num) {
  *  @param  num
  *          Number of bytes
  */
-void Adafruit_APDS9960::write(uint8_t reg, uint8_t *buf, uint8_t num) {
-  uint8_t prefix[1] = {reg};
-  i2c_dev->write(buf, num, true, prefix, 1);
+#include <string.h>
+void Adafruit_APDS9960::write(uint8_t reg, uint8_t *pBuf, uint8_t size) {
+  if(!pBuf){
+    fprintf(stderr, "write(): invalid buf pointer\n");
+    return;
+  }
+  i2c_char_t buf[1 + size];
+  buf[0] = reg;
+  memcpy(buf + 1, pBuf, size);
+  if(::write(i2C_file, buf, sizeof(buf)) != sizeof(buf))
+    fprintf(stderr, "Failed to write register %d on I2c sensor\n", reg);
 }

@@ -31,8 +31,9 @@
 #ifndef _APDS9960_H_
 #define _APDS9960_H_
 
-#include <Adafruit_I2CDevice.h>
-#include <Arduino.h>
+#include <I2c.h>
+#include <stdint.h>
+#include <stddef.h>
 
 #define APDS9960_ADDRESS (0x39) /**< I2C Address */
 
@@ -170,13 +171,14 @@ enum {
  *  @brief  Class that stores state and functions for interacting with
  *          APDS9960 Sensor
  */
-class Adafruit_APDS9960 {
+class Adafruit_APDS9960 : public I2c {
 public:
+  typedef i2c_char_t byte;
   Adafruit_APDS9960(){};
   ~Adafruit_APDS9960();
 
-  boolean begin(uint16_t iTimeMS = 10, apds9960AGain_t = APDS9960_AGAIN_4X,
-                uint8_t addr = APDS9960_ADDRESS, TwoWire *theWire = &Wire);
+  bool begin(uint16_t iTimeMS = 10, apds9960AGain_t = APDS9960_AGAIN_4X,
+                uint8_t addr = APDS9960_ADDRESS, int bus = 1);
   void setADCIntegrationTime(uint16_t iTimeMS);
   float getADCIntegrationTime();
   void setADCGain(apds9960AGain_t gain);
@@ -184,7 +186,7 @@ public:
   void setLED(apds9960LedDrive_t drive, apds9960LedBoost_t boost);
 
   // proximity
-  void enableProximity(boolean en = true);
+  void enableProximity(bool en = true);
   void setProxGain(apds9960PGain_t gain);
   apds9960PGain_t getProxGain();
   void setProxPulse(apds9960PPulseLen_t pLen, uint8_t pulses);
@@ -196,7 +198,7 @@ public:
   bool getProximityInterrupt();
 
   // gesture
-  void enableGesture(boolean en = true);
+  void enableGesture(bool en = true);
   bool gestureValid();
   void setGestureDimensions(uint8_t dims);
   void setGestureFIFOThreshold(uint8_t thresh);
@@ -208,7 +210,7 @@ public:
   void resetCounts();
 
   // light & color
-  void enableColor(boolean en = true);
+  void enableColor(bool en = true);
   bool colorDataReady();
   void getColorData(uint16_t *r, uint16_t *g, uint16_t *b, uint16_t *c);
   uint16_t calculateColorTemperature(uint16_t r, uint16_t g, uint16_t b);
@@ -219,11 +221,9 @@ public:
   void setIntLimits(uint16_t l, uint16_t h);
 
   // turn on/off elements
-  void enable(boolean en = true);
+  void enable(bool en = true);
 
 private:
-  Adafruit_I2CDevice *i2c_dev = NULL; ///< Pointer to I2C bus interface
-
   uint32_t read32(uint8_t reg);
   uint16_t read16(uint8_t reg);
   uint16_t read16R(uint8_t reg);
