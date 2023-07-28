@@ -736,7 +736,7 @@ uint8_t Adafruit_APDS9960::read(uint8_t reg, uint8_t *buf, uint8_t num) {
  */
 #include <string.h>
 void Adafruit_APDS9960::write(uint8_t reg, uint8_t *pBuf, uint8_t size) {
-  if(!pBuf){
+  if(size && !pBuf){
     fprintf(stderr, "write(): invalid buf pointer\n");
     return;
   }
